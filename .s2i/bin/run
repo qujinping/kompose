@@ -4,4 +4,4 @@ set -e
 
 APPROOT=/opt/app-root
 
-exec $APPROOT/bin/skopeo "$@"
+exec $APPROOT/bin/kompose "$@"

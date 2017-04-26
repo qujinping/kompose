@@ -14,7 +14,7 @@ function finish {
 trap finish EXIT
 
 echo "---> Preparing source..."
-SOURCE=$GOPATH/src/github.com/projectatomic/skopeo
+SOURCE=$GOPATH/src/github.com/kubernetes-incubator/kompose
 mkdir -p $SOURCE
 
 cp -Rf /tmp/src/. $SOURCE
@@ -24,10 +24,10 @@ cd $SOURCE
 echo "---> Downloading dependencies..."
 
 echo "---> Building application source..."
-make binary-local
+make bin
 
 echo "---> Installing application binary..."
-cp ./skopeo /opt/app-root/bin
+cp ./kompose /opt/app-root/bin
 
 echo
 echo "===> Build completed at $(date)"
