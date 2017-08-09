@@ -1,5 +1,5 @@
 /*
-Copyright 2016 The Kubernetes Authors All rights reserved.
+Copyright 2017 The Kubernetes Authors All rights reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -20,16 +20,20 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
+	"path"
 	"strings"
 
 	log "github.com/Sirupsen/logrus"
-	"github.com/kubernetes-incubator/kompose/pkg/kobject"
+	"github.com/kubernetes/kompose/pkg/kobject"
 
+	"github.com/kubernetes/kompose/pkg/utils/docker"
 	"path/filepath"
 
 	"github.com/pkg/errors"
+	"k8s.io/kubernetes/pkg/api"
 )
 
+// Selector used as labels and selector
 const Selector = "io.kompose.service"
 
 // CreateOutFile creates the file to write to if --out is specified
@@ -71,7 +75,7 @@ func ParseVolume(volume string) (name, host, container, mode string, err error) 
 	possibleAccessMode := volumeStrings[len(volumeStrings)-1]
 
 	// Check to see if :Z or :z exists. We do not support SELinux relabeling at the moment.
-	// See https://github.com/kubernetes-incubator/kompose/issues/176
+	// See https://github.com/kubernetes/kompose/issues/176
 	// Otherwise, check to see if "rw" or "ro" has been passed
 	if possibleAccessMode == "z" || possibleAccessMode == "Z" {
 		log.Warnf("Volume mount \"%s\" will be mounted without labeling support. :z or :Z not supported", volume)
@@ -96,7 +100,7 @@ func ParseVolume(volume string) (name, host, container, mode string, err error) 
 }
 
 func isPath(substring string) bool {
-	return strings.Contains(substring, "/")
+	return strings.Contains(substring, "/") || substring == "."
 }
 
 // ConfigLabels configures label
@@ -115,7 +119,7 @@ func ConfigAnnotations(service kobject.ServiceConfig) map[string]string {
 }
 
 // Print either prints to stdout or to file/s
-func Print(name, path string, trailing string, data []byte, toStdout, generateJSON bool, f *os.File) (string, error) {
+func Print(name, path string, trailing string, data []byte, toStdout, generateJSON bool, f *os.File, provider string) (string, error) {
 	file := ""
 	if generateJSON {
 		file = fmt.Sprintf("%s-%s.json", name, trailing)
@@ -137,7 +141,115 @@ func Print(name, path string, trailing string, data []byte, toStdout, generateJS
 		if err := ioutil.WriteFile(file, []byte(data), 0644); err != nil {
 			return "", errors.Wrap(err, "Failed to write %s: "+trailing)
 		}
-		log.Printf("file %q created", file)
+		log.Printf("%s file %q created", formatProviderName(provider), file)
 	}
 	return file, nil
+}
+
+// If Openshift, change to OpenShift!
+func formatProviderName(provider string) string {
+	if strings.EqualFold(provider, "openshift") {
+		return "OpenShift"
+	} else if strings.EqualFold(provider, "kubernetes") {
+		return "Kubernetes"
+	}
+	return provider
+}
+
+// EnvSort struct
+type EnvSort []api.EnvVar
+
+// returns the number of elements in the collection.
+func (env EnvSort) Len() int {
+	return len(env)
+}
+
+// returns whether the element with index i should sort before
+// the element with index j.
+func (env EnvSort) Less(i, j int) bool {
+	return env[i].Name < env[j].Name
+}
+
+// swaps the elements with indexes i and j.
+func (env EnvSort) Swap(i, j int) {
+	env[i], env[j] = env[j], env[i]
+}
+
+// GetComposeFileDir returns compose file directory
+func GetComposeFileDir(inputFiles []string) (string, error) {
+	// Lets assume all the docker-compose files are in the same directory
+	inputFile := inputFiles[0]
+	if strings.Index(inputFile, "/") != 0 {
+		workDir, err := os.Getwd()
+		if err != nil {
+			return "", err
+		}
+		inputFile = filepath.Join(workDir, inputFile)
+	}
+	log.Debugf("Compose file dir: %s", filepath.Dir(inputFile))
+	return filepath.Dir(inputFile), nil
+}
+
+//BuildDockerImage builds docker image
+func BuildDockerImage(service kobject.ServiceConfig, name string, relativePath string) error {
+
+	// First, let's figure out the relative path of the Dockerfile!
+	// else, we error out.
+	if _, err := os.Stat(service.Build); err != nil {
+		return errors.Wrapf(err, "%s is not a valid path for building image %s. Check if this dir exists.", service.Build, name)
+	}
+
+	// Get the appropriate image source and name
+	// use path.Base to get the last element of the relative build path
+	imagePath := path.Join(relativePath, path.Base(service.Build))
+	imageName := name
+	if service.Image != "" {
+		imageName = service.Image
+	}
+
+	// Connect to the Docker client
+	client, err := docker.DockerClient()
+	if err != nil {
+		return err
+	}
+
+	// Use the build struct function to build the image
+	// Build the image!
+	build := docker.Build{Client: *client}
+	err = build.BuildImage(imagePath, imageName)
+
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// PushDockerImage pushes docker image
+func PushDockerImage(service kobject.ServiceConfig, serviceName string) error {
+
+	log.Debugf("Pushing Docker image '%s'", service.Image)
+
+	// Don't do anything if service.Image is blank, but at least WARN about it
+	// lse, let's push the image
+	if service.Image == "" {
+		log.Warnf("No image name has been passed for service %s, skipping pushing to repository", serviceName)
+		return nil
+	} else {
+
+		// Connect to the Docker client
+		client, err := docker.DockerClient()
+		if err != nil {
+			return err
+		}
+
+		push := docker.Push{Client: *client}
+		err = push.PushImage(service.Image)
+
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }

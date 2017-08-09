@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Copyright 2016 The Kubernetes Authors All rights reserved.
+# Copyright 2017 The Kubernetes Authors All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -16,6 +16,19 @@
 
 KOMPOSE_ROOT=$(readlink -f $(dirname "${BASH_SOURCE}")/../../..)
 source $KOMPOSE_ROOT/script/test/cmd/lib.sh
+
+# Get current branch and remote url of git repository
+branch=$(git branch | grep \* | cut -d ' ' -f2-)
+
+uri=$(git config --get remote.origin.url)
+if [[ $uri != *".git"* ]]; then
+    uri="${uri}.git"
+fi
+
+# Warning Template
+warning="Buildconfig using $uri::$branch as source."
+# Replacing variables with current branch and uri
+sed -e "s;%URI%;$uri;g" -e "s;%REF%;$branch;g" $KOMPOSE_ROOT/script/test/fixtures/nginx-node-redis/output-os-template.json > /tmp/output-os.json
 
 #######
 # Tests related to docker-compose file in /script/test/fixtures/etherpad
@@ -41,16 +54,21 @@ convert::expect_success "kompose --provider=openshift -f $KOMPOSE_ROOT/script/te
 unset $(cat $KOMPOSE_ROOT/script/test/fixtures/gitlab/envs | cut -d'=' -f1)
 
 ######
-# Tests related to docker-compose file in /script/test/fixtures/ngnix-node-redis
+# Tests related to docker-compose file in /script/test/fixtures/nginx-node-redis
 # kubernetes test
-convert::expect_success_and_warning "kompose -f $KOMPOSE_ROOT/script/test/fixtures/ngnix-node-redis/docker-compose.yml convert --stdout -j" "$KOMPOSE_ROOT/script/test/fixtures/ngnix-node-redis/output-k8s.json" "Kubernetes provider doesn't support build key - ignoring"
+convert::expect_success "kompose -f $KOMPOSE_ROOT/script/test/fixtures/nginx-node-redis/docker-compose.yml convert --stdout -j" "$KOMPOSE_ROOT/script/test/fixtures/nginx-node-redis/output-k8s.json"
 # openshift test
-convert::expect_success_and_warning "kompose --provider=openshift -f $KOMPOSE_ROOT/script/test/fixtures/ngnix-node-redis/docker-compose.yml convert --stdout -j" "$KOMPOSE_ROOT/script/test/fixtures/ngnix-node-redis/output-os.json" "Buildconfig using https://github.com/kubernetes-incubator/kompose.git::HEAD as source."
+
+# Replacing variables with current branch and uri
+# Test BuildConfig
+sed -e "s;%URI%;$uri;g" -e "s;%REF%;$branch;g" $KOMPOSE_ROOT/script/test/fixtures/nginx-node-redis/output-os-template.json > /tmp/output-os.json
+convert::expect_success_and_warning "kompose --provider=openshift -f $KOMPOSE_ROOT/script/test/fixtures/nginx-node-redis/docker-compose.yml convert --stdout -j --build build-config" "/tmp/output-os.json" "$warning"
+rm /tmp/output-os.json
 
 ######
 # Tests related to docker-compose file in /script/test/fixtures/entrypoint-command
 # kubernetes test
-convert::expect_success "kompose -f $KOMPOSE_ROOT/script/test/fixtures/entrypoint-command/docker-compose.yml convert --stdout -j" "$KOMPOSE_ROOT/script/test/fixtures/entrypoint-command/output-k8s.json" 
+convert::expect_success "kompose -f $KOMPOSE_ROOT/script/test/fixtures/entrypoint-command/docker-compose.yml convert --stdout -j" "$KOMPOSE_ROOT/script/test/fixtures/entrypoint-command/output-k8s.json"
 # openshift test
 convert::expect_success "kompose --provider=openshift -f $KOMPOSE_ROOT/script/test/fixtures/entrypoint-command/docker-compose.yml convert --stdout -j" "$KOMPOSE_ROOT/script/test/fixtures/entrypoint-command/output-os.json"
 
@@ -88,6 +106,12 @@ convert::expect_success_and_warning "kompose -f $KOMPOSE_ROOT/script/test/fixtur
 # openshift test
 convert::expect_success_and_warning "kompose --provider=openshift -f $KOMPOSE_ROOT/script/test/fixtures/volume-mounts/volumes-from/docker-compose.yml convert --stdout -j" "$KOMPOSE_ROOT/script/test/fixtures/volume-mounts/volumes-from/output-os.json" "ignoring path on the host"
 
+# Tests related to docker-compose file in /script/test/fixtures/volume-mounts/volumes-from corner cases
+# kubernetes test
+convert::expect_success "kompose -f $KOMPOSE_ROOT/script/test/fixtures/volume-mounts/volumes-from/docker-compose-case.yml convert --stdout -j" "$KOMPOSE_ROOT/script/test/fixtures/volume-mounts/volumes-from/output-k8s-case.json"
+# openshift test
+convert::expect_success "kompose --provider=openshift -f $KOMPOSE_ROOT/script/test/fixtures/volume-mounts/volumes-from/docker-compose-case.yml convert --stdout -j" "$KOMPOSE_ROOT/script/test/fixtures/volume-mounts/volumes-from/output-os-case.json"
+
 
 ######
 # Tests related to docker-compose file in /script/test/fixtures/envvars-separators
@@ -101,11 +125,10 @@ convert::expect_failure "kompose down $KOMPOSE_ROOT/script/test/fixtures/gitlab/
 convert::expect_failure "kompose convert $KOMPOSE_ROOT/script/test/fixtures/gitlab/docker-compose.yml -j" "Unknown Argument docker-gitlab.yml"
 
 # Tests related to kompose --bundle convert usage and that setting the compose file results in a failure
-convert::expect_failure "kompose -f $KOMPOSE_ROOT/script/test/fixtures/bundles/foo.yml --bundle $KOMPOSE_ROOT/script/test/fixtures/bundles/dab/docker-compose-bundle.dab convert"
-
-######
-# Test related to kompose --bundle convert to ensure that docker bundles are converted properly
-convert::expect_success "kompose --bundle $KOMPOSE_ROOT/script/test/fixtures/bundles/dab/docker-compose-bundle.dab convert --stdout -j" "$KOMPOSE_ROOT/script/test/fixtures/bundles/dab/output-k8s.json"
+# We no longer test --bundle, however, this command may come back in the future thus we are keeping the test commented
+# convert::expect_failure "kompose -f $KOMPOSE_ROOT/script/test/fixtures/bundles/foo.yml --bundle $KOMPOSE_ROOT/script/test/fixtures/bundles/dab/docker-compose-bundle.dab convert"
+# convert::expect_success "kompose --bundle $KOMPOSE_ROOT/script/test/fixtures/bundles/dab/docker-compose-bundle.dab convert --stdout -j" "$KOMPOSE_ROOT/script/test/fixtures/bundles/dab/output-k8s.json"
+# convert::expect_success_and_warning "kompose --bundle $KOMPOSE_ROOT/script/test/fixtures/bundles/dsb/docker-voting-bundle.dsb convert --stdout -j" "$KOMPOSE_ROOT/script/test/fixtures/bundles/dsb/output-k8s.json"  "Unsupported Networks key - ignoring"
 
 # Test related to multiple-compose files
 # Kubernets test
@@ -113,9 +136,6 @@ convert::expect_success_and_warning "kompose -f $KOMPOSE_ROOT/script/test/fixtur
 # OpenShift test
 convert::expect_success_and_warning "kompose --provider=openshift -f $KOMPOSE_ROOT/script/test/fixtures/multiple-compose-files/docker-k8s.yml -f $KOMPOSE_ROOT/script/test/fixtures/multiple-compose-files/docker-os.yml convert --stdout -j" "$KOMPOSE_ROOT/script/test/fixtures/multiple-compose-files/output-openshift.json" "Unsupported depends_on key - ignoring"
 
-######
-# Test related to kompose --bundle convert to ensure that DSB bundles are converted properly
-convert::expect_success_and_warning "kompose --bundle $KOMPOSE_ROOT/script/test/fixtures/bundles/dsb/docker-voting-bundle.dsb convert --stdout -j" "$KOMPOSE_ROOT/script/test/fixtures/bundles/dsb/output-k8s.json"  "Unsupported Networks key - ignoring"
 
 ######
 # Test related to restart options in docker-compose
@@ -176,6 +196,20 @@ convert::expect_success "kompose --provider openshift -f $KOMPOSE_ROOT/script/te
 # when kompose.service.expose="<hostname>" and multiple ports in docker compose file (first port should be selected)
 convert::expect_success "kompose --provider openshift -f $KOMPOSE_ROOT/script/test/fixtures/expose-service/compose-files/docker-compose-expose-hostname-multiple-ports.yml convert --stdout -j" "$KOMPOSE_ROOT/script/test/fixtures/expose-service/provider-files/openshift-expose-hostname-multiple-ports.json"
 
+
+# Test the change in the service name
+# Kubernetes Test
+convert::expect_success_and_warning "kompose -f $KOMPOSE_ROOT/script/test/fixtures/service-name-change/docker-compose.yml convert --stdout -j" "$KOMPOSE_ROOT/script/test/fixtures/service-name-change/output-k8s.json" "Unsupported root level volumes key - ignoring"
+# Openshift Test
+convert::expect_success_and_warning "kompose --provider openshift -f $KOMPOSE_ROOT/script/test/fixtures/service-name-change/docker-compose.yml convert --stdout -j" "$KOMPOSE_ROOT/script/test/fixtures/service-name-change/output-os.json" "Unsupported root level volumes key - ignoring"
+
+# Test regarding validating dockerfilepath
+convert::expect_failure "kompose -f $KOMPOSE_ROOT/script/test/fixtures/dockerfilepath/docker-compose.yml convert --stdout"
+
+# Test regarding while label (nodeport or loadbalancer ) is provided but not ports
+convert::expect_failure "kompose -f $KOMPOSE_ROOT/script/test/fixtures/label-port/docker-compose.yml convert --stdout"
+
+
 ######
 # Test the output file behavior of kompose convert
 # Default behavior without -o
@@ -186,6 +220,37 @@ convert::check_artifacts_generated "kompose -f $KOMPOSE_ROOT/script/test/fixture
 convert::check_artifacts_generated "kompose -f $KOMPOSE_ROOT/script/test/fixtures/redis-example/docker-compose.yml convert -o $TEMP_DIR -j" "$TEMP_DIR/redis-deployment.json" "$TEMP_DIR/redis-service.json" "$TEMP_DIR/web-deployment.json" "$TEMP_DIR/web-service.json"
 # Behavior with -o <dirname>/<filename>
 convert::check_artifacts_generated "kompose -f $KOMPOSE_ROOT/script/test/fixtures/redis-example/docker-compose.yml convert -o $TEMP_DIR/output_file -j" "$TEMP_DIR/output_file"
+
+####
+# Test regarding build context (running kompose from various directories)
+# Replacing variables with current branch and uri
+# Test BuildConfig
+sed -e "s;%URI%;$uri;g" -e "s;%REF%;$branch;g" $KOMPOSE_ROOT/script/test/fixtures/nginx-node-redis/output-os-template.json > /tmp/output-os.json
+CURRENT_DIR=$(pwd)
+cd "$KOMPOSE_ROOT/script/test/fixtures/nginx-node-redis/"
+convert::expect_success_and_warning "kompose convert --provider openshift --stdout -j --build build-config" "/tmp/output-os.json" "$warning"
+cd "$KOMPOSE_ROOT/script/test/fixtures/"
+convert::expect_success_and_warning "kompose convert --provider openshift --stdout -j -f nginx-node-redis/docker-compose.yml --build build-config" "/tmp/output-os.json" "$warning"
+cd "$KOMPOSE_ROOT/script/test/fixtures/nginx-node-redis/node"
+convert::expect_success_and_warning "kompose convert  --provider openshift --stdout -j -f ../docker-compose.yml --build build-config" "/tmp/output-os.json" "$warning"
+cd $CURRENT_DIR
+rm /tmp/output-os.json
+
+
+# Test the presence of build args in buildconfig
+# Replacing variables with current branch and uri
+# Test BuildConfig
+sed -e "s;%URI%;$uri;g" -e "s;%REF%;$branch;g" $KOMPOSE_ROOT/script/test/fixtures/buildargs/output-os-template.json > /tmp/output-buildarg-os.json
+export $(cat $KOMPOSE_ROOT/script/test/fixtures/buildargs/envs)
+convert::expect_success_and_warning "kompose --provider openshift -f $KOMPOSE_ROOT/script/test/fixtures/buildargs/docker-compose.yml convert --stdout -j --build build-config" "/tmp/output-buildarg-os.json" "$warning"
+rm /tmp/output-buildarg-os.json
+
+####
+# Test related to change in pvc name if volume used is in the current directory
+# kubernetes test
+convert::expect_success_and_warning "kompose convert -f $KOMPOSE_ROOT/script/test/fixtures/change-in-volume/docker-compose.yml --stdout -j" "$KOMPOSE_ROOT/script/test/fixtures/change-in-volume/output-k8s.json" "Volume mount on the host "\"."\" isn't supported - ignoring path on the host"
+# openshift test
+convert::expect_success_and_warning "kompose convert --provider=openshift -f $KOMPOSE_ROOT/script/test/fixtures/change-in-volume/docker-compose.yml --stdout -j" "$KOMPOSE_ROOT/script/test/fixtures/change-in-volume/output-os.json" "Volume mount on the host "\"."\" isn't supported - ignoring path on the host"
 
 # Test related to support docker-compose.yaml beside docker-compose.yml
 # Store the original path
@@ -202,5 +267,36 @@ cd "$KOMPOSE_ROOT/script/test/fixtures/yaml-and-yml/yml"
 convert::expect_success "kompose --provider=openshift convert --stdout -j" "$KOMPOSE_ROOT/script/test/fixtures/yaml-and-yml/yml/output-os.json"
 # Return back to the original path
 cd $CURRENT_DIR
+
+# Test V3 Support of Docker Compose
+
+# Test support for cpu and memory limits + reservations
+convert::expect_success "kompose convert --stdout -j -f $KOMPOSE_ROOT/script/test/fixtures/v3/docker-compose-memcpu.yaml" "$KOMPOSE_ROOT/script/test/fixtures/v3/output-memcpu-k8s.json"
+
+# Test volumes are passed correctly
+convert::expect_success "kompose convert --stdout -j -f $KOMPOSE_ROOT/script/test/fixtures/v3/docker-compose-volumes.yaml" "$KOMPOSE_ROOT/script/test/fixtures/v3/output-volumes-k8s.json"
+
+# Test environment variables are passed correctly
+convert::expect_success "kompose convert --stdout -j -f $KOMPOSE_ROOT/script/test/fixtures/v3/docker-compose-env.yaml" "$KOMPOSE_ROOT/script/test/fixtures/v3/output-env-k8s.json"
+
+# Test environment variables substitution
+convert::expect_success "kompose convert --stdout -j -f $KOMPOSE_ROOT/script/test/fixtures/v3/docker-compose-env-subs.yaml" "$KOMPOSE_ROOT/script/test/fixtures/v3/output-env-subs.json"
+
+# Test that two files that are different versions fail
+convert::expect_failure "kompose convert --stdout -j -f $KOMPOSE_ROOT/script/test/fixtures/v3/docker-compose.yaml -f $KOMPOSE_ROOT/script/test/fixtures/etherpad/docker-compose.yml"
+
+# Kubernetes
+convert::expect_success "kompose convert --stdout -j -f $KOMPOSE_ROOT/script/test/fixtures/v3/docker-compose.yaml" "$KOMPOSE_ROOT/script/test/fixtures/v3/output-k8s.json"
+
+# OpenShift
+convert::expect_success "kompose convert --provider=openshift --stdout -j -f $KOMPOSE_ROOT/script/test/fixtures/v3/docker-compose.yaml" "$KOMPOSE_ROOT/script/test/fixtures/v3/output-os.json"
+
+# Test the "full example" from https://raw.githubusercontent.com/aanand/compose-file/master/loader/example1.env
+
+# Kubernetes
+convert::expect_success_and_warning "kompose convert --stdout -j -f $KOMPOSE_ROOT/script/test/fixtures/v3/docker-compose-full-example.yaml" "$KOMPOSE_ROOT/script/test/fixtures/v3/output-k8s-full-example.json"
+
+# Openshift
+convert::expect_success_and_warning "kompose convert --provider=openshift --stdout -j -f $KOMPOSE_ROOT/script/test/fixtures/v3/docker-compose-full-example.yaml" "$KOMPOSE_ROOT/script/test/fixtures/v3/output-os-full-example.json"
 
 exit $EXIT_STATUS

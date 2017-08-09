@@ -60,7 +60,10 @@
       "apiVersion": "extensions/v1beta1",
       "metadata": {
         "name": "etherpad",
-        "creationTimestamp": null
+        "creationTimestamp": null,
+        "labels": {
+          "io.kompose.service": "etherpad"
+        }
       },
       "spec": {
         "replicas": 1,
@@ -83,10 +86,6 @@
                 ],
                 "env": [
                   {
-                    "name": "DB_USER",
-                    "value": "etherpad"
-                  },
-                  {
                     "name": "DB_DBID",
                     "value": "etherpad"
                   },
@@ -101,6 +100,10 @@
                   {
                     "name": "DB_PORT",
                     "value": "3306"
+                  },
+                  {
+                    "name": "DB_USER",
+                    "value": "etherpad"
                   }
                 ],
                 "resources": {}
@@ -118,7 +121,10 @@
       "apiVersion": "extensions/v1beta1",
       "metadata": {
         "name": "mariadb",
-        "creationTimestamp": null
+        "creationTimestamp": null,
+        "labels": {
+          "io.kompose.service": "mariadb"
+        }
       },
       "spec": {
         "replicas": 1,

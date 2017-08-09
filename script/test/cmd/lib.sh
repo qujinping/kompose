@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Copyright 2016 The Kubernetes Authors All rights reserved.
+# Copyright 2017 The Kubernetes Authors All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -82,9 +82,11 @@ function convert::match_output() {
     if [ $exit_status -ne 0 ]; then FAIL_MSGS=$FAIL_MSGS"exit status: $exit_status\n"; return $exit_status; fi
 
     match=$(jq --argfile a $TEMP_STDOUT --argfile b $expected_output -n 'def post_recurse(f): def r: (f | select(. != null) | r), .; r; def post_recurse: post_recurse(.[]?); ($a | (post_recurse | arrays) |= sort) as $a | ($b | (post_recurse | arrays) |= sort) as $b | $a == $b')
-
+    $cmd > /tmp/test.json
+    diff /tmp/test.json $expected_output > /tmp/diff
+    rm /tmp/test.json
     if [ "$match" = true ]; then SUCCESS_MSGS=$SUCCESS_MSGS"converted output matches\n"; return 0;
-    else FAIL_MSGS=$FAIL_MSGS"converted output does not match\n"; return 1; fi
+    else FAIL_MSGS=$FAIL_MSGS"converted output does not match\n"; cat /tmp/diff; rm /tmp/diff; return 1; fi
 }
 readonly -f convert::match_output
 

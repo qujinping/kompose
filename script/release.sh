@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-# Copyright 2016 The Kubernetes Authors All rights reserved.
+# Copyright 2017 The Kubernetes Authors All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,8 +15,9 @@
 # limitations under the License.
 
 # Constants. Enter relevant repo information here.
-UPSTREAM_REPO="kubernetes-incubator"
+UPSTREAM_REPO="kubernetes"
 CLI="kompose"
+GITPATH="$GOPATH/src/github.com/kubernetes/kompose"
 
 usage() {
   echo "This will prepare $CLI for release!"
@@ -34,65 +35,78 @@ usage() {
 }
 
 requirements() {
-  if [ ! -f /usr/bin/git ] && [ ! -f /usr/local/bin/git ]; then
-    echo "No git."
-    return 1
+
+  if [ "$PWD" != "$GITPATH" ]; then
+    echo "ERROR: Must be in the $GITPATH directory"
+    exit 0
   fi
 
-  if [ ! -f $GOPATH/bin/github-release ]; then
-    echo "No $GOPATH/bin/github-release. Please run 'go get -v github.com/aktau/github-release'"
-    return 1
+  if ! hash git 2>/dev/null; then
+    echo "ERROR: No git."
+    exit 0
   fi
 
-  if [ ! -f /usr/local/bin/github_changelog_generator ]; then
-    echo "github_changelog_generator required to generate the change log. Please run 'gem install github_changelog_generator"
-    return 1
+  if ! hash github-release 2>/dev/null; then
+    echo "ERROR: No $GOPATH/bin/github-release. Please run 'go get -v github.com/aktau/github-release'"
+    exit 0
   fi
 
-  if [ ! -f /usr/bin/hub ]; then
-    echo "Hub needed in order to create the relevant PR's. Please install hub @ https://github.com/github/hub"
-    return 1
+  if ! hash github_changelog_generator 2>/dev/null; then
+    echo "ERROR: github_changelog_generator required to generate the change log. Please run 'gem install github_changelog_generator"
+    exit 0
+  fi
+
+  if ! hash hub 2>/dev/null; then
+    echo "ERROR: Hub needed in order to create the relevant PR's. Please install hub @ https://github.com/github/hub"
+    exit 0
   fi
 
   if [[ -z "$GITHUB_TOKEN" ]]; then
-    echo "export GITHUB_TOKEN=yourtoken needed for using github-release"
+    echo "ERROR: export GITHUB_TOKEN=yourtoken needed for using github-release"
+    exit 0
   fi
 }
 
-# Clone and then change to user's upstream repo for pushing to master / opening PR's :)
-clone() {
-  git clone ssh://git@github.com/$UPSTREAM_REPO/$CLI.git
-  if [ $? -eq 0 ]; then
-        echo OK
-  else
-        echo FAIL
-        exit
+# Make sure that upstream had been added to the repo 
+init_sync() {
+  CURRENT_ORIGIN=`git config --get remote.origin.url`
+  CURRENT_UPSTREAM=`git config --get remote.upstream.url`
+  ORIGIN="git@github.com:$ORIGIN_REPO/$CLI.git"
+  UPSTREAM="git@github.com:$UPSTREAM_REPO/$CLI.git"
+
+  if [ $CURRENT_ORIGIN != $ORIGIN ]; then
+    echo "Origin repo must be set to $ORIGIN"
+    exit 0
   fi
-  cd $CLI
-  git remote remove origin
-  git remote add origin git@github.com:$ORIGIN_REPO/$CLI.git
-  git remote add upstream http://github.com/$UPSTREAM_REPO/$CLI
+
+  if [ $CURRENT_UPSTREAM != $UPSTREAM ]; then
+    echo "Upstream repo must be set to $UPSTREAM"
+    exit 0
+  fi
+
+  git checkout master
+  git fetch upstream
+  git merge upstream/master
   git checkout -b release-$1
-  cd ..
 }
 
 replaceversion() {
-  cd $CLI
-
-  echo "1. Replaced version in version.go"
+  echo "Replaced version in version.go"
   sed -i "s/$1/$2/g" cmd/version.go
 
-  echo "2. Replaced README.md versioning"
+  echo "Replaced version in README.md"
   sed -i "s/$1/$2/g" README.md
-  
-  cd ..
+
+  echo "Replaced version in docs/installation.md"
+  sed -i "s/$1/$2/g" docs/installation.md
+
+  echo "Replaced version in build/VERSION"
+  sed -i "s/$1/$2/g" build/VERSION
 }
 
 changelog() {
-  cd $CLI
   echo "Generating changelog using github-changelog-generator"
   github_changelog_generator $UPSTREAM_REPO/$CLI -t $GITHUB_TOKEN --future-release v$1
-  cd ..
 }
 
 changelog_github() {
@@ -102,14 +116,20 @@ changelog_github() {
 }
 
 build_binaries() {
-  cd $CLI
   make cross
+}
+
+create_tarballs() {
+  # cd into the bin directory so we don't have '/bin' inside the tarball
+  cd bin
+  for f in *
+  do
+    tar cvzf $f.tar.gz $f
+  done
   cd ..
 }
 
 git_commit() {
-  cd $CLI 
-
   BRANCH=`git symbolic-ref --short HEAD`
   if [ -z "$BRANCH" ]; then
     echo "Unable to get branch name, is this even a git repo?"
@@ -122,7 +142,6 @@ git_commit() {
   git push origin $BRANCH
   hub pull-request -b $UPSTREAM_REPO/$CLI:master -h $ORIGIN_REPO/$CLI:$BRANCH
 
-  cd ..
   echo ""
   echo "PR opened against master to update version"
   echo "MERGE THIS BEFORE CONTINUING"
@@ -130,16 +149,54 @@ git_commit() {
 }
 
 git_pull() {
-  cd $CLI
   git pull
-  cd ..
 }
 
 
 git_sync() {
-  cd $CLI
   git fetch upstream master
   git rebase upstream/master
+}
+
+git_tag() {
+  git tag v$1
+}
+
+generate_install_guide() {
+  echo "
+# Installation
+
+__Linux and macOS:__
+
+\`\`\`sh
+# Linux
+curl -L https://github.com/kubernetes/kompose/releases/download/v$1/kompose-linux-amd64 -o kompose
+
+# macOS
+curl -L https://github.com/kubernetes/kompose/releases/download/v$1/kompose-darwin-amd64 -o kompose
+
+chmod +x kompose
+sudo mv ./kompose /usr/local/bin/kompose
+\`\`\`
+
+__Windows:__
+
+Download from [GitHub](https://github.com/kubernetes/kompose/releases/download/v$1/kompose-windows-amd64.exe) and add the binary to your PATH.
+
+__Checksums:__
+
+| Filename        | SHA256 Hash |
+| ------------- |:-------------:|" > install_guide.txt
+
+  for f in bin/*
+  do
+    HASH=`sha256sum $f | head -n1 | awk '{print $1;}'`
+    NAME=`echo $f | sed "s,bin/,,g"`
+    echo "[$NAME](https://github.com/kubernetes/kompose/releases/download/v$1/$NAME) | $HASH" >> install_guide.txt
+  done
+
+ # Append the file to the file
+ cat install_guide.txt >> changes.txt
 }
 
 push() {
@@ -160,11 +217,11 @@ push() {
         exit
   fi
 
-  # Upload all the binaries generated in bin/
-  for f in $CLI/bin/*
+  # Upload all the binaries and tarballs generated in bin/
+  for f in bin/*
   do
-    echo "Uploading $f binary"
-    NAME=`echo $f | sed "s,$CLI/bin/,,g"`
+    echo "Uploading file $f"
+    NAME=`echo $f | sed "s,bin/,,g"`
     github-release upload \
         --user $UPSTREAM_REPO \
         --repo $CLI \
@@ -187,12 +244,14 @@ push() {
 }
 
 clean() {
-  rm -rf $CLI $CLI-$1 $CLI-$1.tar.gz changes.txt
+  rm changes.txt install_guide.txt
 }
 
 main() {
   local cmd=$1
   usage
+
+  requirements
 
   echo "What is your Github username? (location of your $CLI fork)"
   read ORIGIN_REPO 
@@ -220,13 +279,16 @@ main() {
 
   PS3='Please enter your choice: '
   options=(
-  "Git clone master"
+  "Initial sync with upstream"
   "Replace version number"
   "Generate changelog"
   "Generate GitHub changelog"
   "Create PR"
-  "Sync with master"
+  "Sync with upstream"
+  "Create tag"
   "Build binaries"
+  "Create tarballs"
+  "Generate install guide"
   "Upload the binaries and push to GitHub release page"
   "Clean"
   "Quit")
@@ -234,8 +296,8 @@ main() {
   do
       echo ""
       case $opt in
-          "Git clone master")
-              clone $VERSION
+          "Initial sync with upstream")
+              init_sync $VERSION
               ;;
           "Replace version number")
               replaceversion $PREV_VERSION $VERSION
@@ -249,11 +311,20 @@ main() {
           "Create PR")
               git_commit $VERSION
               ;;
-          "Sync with master")
+          "Sync with upstream")
               git_sync
+              ;;
+          "Create tag")
+              git_tag $VERSION
               ;;
           "Build binaries")
               build_binaries
+              ;;
+          "Create tarballs")
+              create_tarballs
+              ;;
+          "Generate install guide")
+              generate_install_guide $VERSION
               ;;
           "Upload the binaries and push to GitHub release page")
               push $VERSION

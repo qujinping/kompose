@@ -7,7 +7,7 @@ if [ "$TRAVIS_BRANCH" != "master" ] || [ "$BUILD_DOCS" != "yes" ] || [ "$TRAVIS_
 fi
 
 DOCS_REPO_NAME="kompose"
-DOCS_REPO_URL="git@github.com:kubernetes-incubator/kompose.git"
+DOCS_REPO_URL="git@github.com:kubernetes/kompose.git"
 DOCS_KEY="script/deploy_key"
 DOCS_USER="komposebot"
 DOCS_EMAIL="cdrage+kompose@redhat.com"
@@ -30,6 +30,28 @@ cd "$DOCS_REPO_NAME"
 git checkout gh-pages
 git checkout master docs
 
+# Remove README.md from docs folder as it isn't relevant
+rm docs/README.md
+
+# Use quickstart.md instead as the main index page
+mv docs/quickstart.md index.md
+
+# Check that index.md has the appropriate Jekyll format
+index="index.md"
+if cat $index | head -n 1 | grep "\-\-\-";
+then
+echo "index.md already contains Jekyll format"
+else
+# Remove ".md" from the name
+name=${index::-3}
+echo "Adding Jekyll file format to $index"
+jekyll="---
+layout: default
+---
+"
+echo -e "$jekyll\n$(cat $index)" > $index
+fi
+
 # clean-up the docs and convert to jekyll-friendly docs
 cd docs
 for filename in *.md; do
@@ -43,15 +65,13 @@ for filename in *.md; do
     jekyll="---
 layout: default
 permalink: /$name/
+redirect_from: \"/docs/$name.md\"
 ---
 "
     echo -e "$jekyll\n$(cat $filename)" > $filename
     fi
 done
 cd ..
-
-# remove README.md from docs folder as it isn't relevant
-rm docs/README.md
 
 # add relevant user information
 git config user.name "$DOCS_USER"
@@ -61,7 +81,7 @@ git config user.email "$DOCS_EMAIL"
 git add --all
 
 # Check if anything changed, and if it's the case, push to origin/master.
-if git commit -m 'Update docs' -m "Commit: https://github.com/kubernetes-incubator/kompose/commit/$TRAVIS_COMMIT" ; then
+if git commit -m 'Update docs' -m "Commit: https://github.com/kubernetes/kompose/commit/$TRAVIS_COMMIT" ; then
   git push
 fi
 

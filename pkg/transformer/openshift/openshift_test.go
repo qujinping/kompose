@@ -1,5 +1,5 @@
 /*
-Copyright 2016 The Kubernetes Authors All rights reserved.
+Copyright 2017 The Kubernetes Authors All rights reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -17,18 +17,19 @@ limitations under the License.
 package openshift
 
 import (
+	kapi "k8s.io/kubernetes/pkg/api"
+	"k8s.io/kubernetes/pkg/runtime"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
-
-	"k8s.io/kubernetes/pkg/api"
-	"k8s.io/kubernetes/pkg/runtime"
 
 	deployapi "github.com/openshift/origin/pkg/deploy/api"
 
-	"github.com/kubernetes-incubator/kompose/pkg/kobject"
-	"github.com/kubernetes-incubator/kompose/pkg/testutils"
-	"github.com/kubernetes-incubator/kompose/pkg/transformer/kubernetes"
+	"github.com/kubernetes/kompose/pkg/kobject"
+	"github.com/kubernetes/kompose/pkg/testutils"
+	"github.com/kubernetes/kompose/pkg/transformer"
+	"github.com/kubernetes/kompose/pkg/transformer/kubernetes"
 	"github.com/pkg/errors"
 )
 
@@ -37,11 +38,11 @@ func newServiceConfig() kobject.ServiceConfig {
 		ContainerName: "myfoobarname",
 		Image:         "image",
 		Environment:   []kobject.EnvVar{kobject.EnvVar{Name: "env", Value: "value"}},
-		Port:          []kobject.Ports{kobject.Ports{HostPort: 123, ContainerPort: 456, Protocol: api.ProtocolTCP}},
+		Port:          []kobject.Ports{kobject.Ports{HostPort: 123, ContainerPort: 456, Protocol: kapi.ProtocolTCP}},
 		Command:       []string{"cmd"},
 		WorkingDir:    "dir",
 		Args:          []string{"arg1", "arg2"},
-		Volumes:       []string{"/tmp/volume"},
+		VolList:       []string{"/tmp/volume"},
 		Network:       []string{"network1", "network2"}, // not supported
 		Labels:        nil,
 		Annotations:   map[string]string{"abc": "def"},
@@ -223,7 +224,7 @@ func TestGetComposeFileDir(t *testing.T) {
 	for name, test := range testCases {
 		t.Log("Test case: ", name)
 
-		output, err = getComposeFileDir(test.inputFiles)
+		output, err = transformer.GetComposeFileDir(test.inputFiles)
 
 		if err != nil {
 			t.Errorf("Expected success, got error: %#v", err)
@@ -243,24 +244,26 @@ func TestGetAbsBuildContext(t *testing.T) {
 	gitDir := testutils.CreateLocalGitDirectory(t)
 	testutils.SetGitRemote(t, gitDir, "newremote", "https://git.test.com/somerepo")
 	testutils.CreateGitRemoteBranch(t, gitDir, "newbranch", "newremote")
-	testutils.CreateSubdir(t, gitDir, "a/b")
+	testutils.CreateSubdir(t, gitDir, "a/b/build")
+	testutils.CreateSubdir(t, gitDir, "build")
 	dir := testutils.CreateLocalDirectory(t)
 	defer os.RemoveAll(gitDir)
 	defer os.RemoveAll(dir)
 
 	testCases := map[string]struct {
-		expectError    bool
-		context        string
-		composeFileDir string
-		output         string
+		expectError bool
+		context     string
+		output      string
 	}{
-		"Get abs build context success": {false, "./b/build", filepath.Join(gitDir, "a"), "a/b/build"},
-		"Get abs build context error":   {true, "", dir, ""},
+		"Get abs build context success case-1": {false, filepath.Join(gitDir, "a/b/build"), "a/b/build/"},
+		"Get abs build context success case-2": {false, filepath.Join(gitDir, "build"), "build/"},
+		"Get abs build context error case-1":   {true, "example/build", "example/build/"},
+		"Get abs build context error case-2":   {true, "/tmp", ""},
 	}
 
 	for name, test := range testCases {
 		t.Log("Test case: ", name)
-		output, err = getAbsBuildContext(test.context, test.composeFileDir)
+		output, err = getAbsBuildContext(test.context)
 
 		if test.expectError {
 			if err == nil {
@@ -279,38 +282,66 @@ func TestGetAbsBuildContext(t *testing.T) {
 
 // Test initializing buildconfig for a service
 func TestInitBuildConfig(t *testing.T) {
+	serviceName := "serviceA"
+	repo := "https://git.test.com/org/repo1"
+	branch := "somebranch"
+	buildArgs := []kapi.EnvVar{{Name: "name", Value: "value"}}
+	value := "value"
+	testDir := "a/build"
+
 	dir := testutils.CreateLocalGitDirectory(t)
-	testutils.CreateSubdir(t, dir, "a/build")
+	testutils.CreateSubdir(t, dir, testDir)
 	defer os.RemoveAll(dir)
 
-	serviceName := "serviceA"
-	composeFileDir := filepath.Join(dir, "a")
-	repo := "https://git.test.com/org/repo"
-	branch := "somebranch"
-	sc := kobject.ServiceConfig{
-		Build:      "./build",
-		Dockerfile: "Dockerfile-alternate",
-	}
-	bc, err := initBuildConfig(serviceName, sc, composeFileDir, repo, branch)
-	if err != nil {
-		t.Error(errors.Wrap(err, "initBuildConfig failed"))
-	}
-
-	testCases := map[string]struct {
-		field string
-		value string
+	testCases := []struct {
+		Name          string
+		ServiceConfig kobject.ServiceConfig
 	}{
-		"Assert buildconfig source git URI":     {bc.Spec.CommonSpec.Source.Git.URI, repo},
-		"Assert buildconfig source git Ref":     {bc.Spec.CommonSpec.Source.Git.Ref, branch},
-		"Assert buildconfig source context dir": {bc.Spec.CommonSpec.Source.ContextDir, "a/build"},
-		"Assert buildconfig output name":        {bc.Spec.CommonSpec.Output.To.Name, serviceName + ":latest"},
-		"Assert buildconfig dockerfilepath":     {bc.Spec.CommonSpec.Strategy.DockerStrategy.DockerfilePath, "Dockerfile-alternate"},
+		{
+			Name: "Service config without image key",
+			ServiceConfig: kobject.ServiceConfig{
+				Build:      filepath.Join(dir, testDir),
+				Dockerfile: "Dockerfile-alternate",
+				BuildArgs:  map[string]*string{"name": &value},
+			},
+		},
+		{
+			Name: "Service config with image key",
+			ServiceConfig: kobject.ServiceConfig{
+				Build:      filepath.Join(dir, testDir),
+				Dockerfile: "Dockerfile-alternate",
+				BuildArgs:  map[string]*string{"name": &value},
+				Image:      "foo:bar",
+			},
+		},
 	}
 
-	for name, test := range testCases {
-		t.Log("Test case: ", name)
-		if test.field != test.value {
-			t.Errorf("Expected: %#v, got: %#v", test.value, test.field)
+	for _, test := range testCases {
+
+		bc, err := initBuildConfig(serviceName, test.ServiceConfig, repo, branch)
+		if err != nil {
+			t.Error(errors.Wrap(err, "initBuildConfig failed"))
+		}
+
+		assertions := map[string]struct {
+			field string
+			value string
+		}{
+			"Assert buildconfig source git URI":     {bc.Spec.CommonSpec.Source.Git.URI, repo},
+			"Assert buildconfig source git Ref":     {bc.Spec.CommonSpec.Source.Git.Ref, branch},
+			"Assert buildconfig source context dir": {bc.Spec.CommonSpec.Source.ContextDir, testDir + "/"},
+			// BuildConfig output image is named after service name. If image key is set than tag from that is used.
+			"Assert buildconfig output name":    {bc.Spec.CommonSpec.Output.To.Name, serviceName + ":" + getImageTag(test.ServiceConfig.Image)},
+			"Assert buildconfig dockerfilepath": {bc.Spec.CommonSpec.Strategy.DockerStrategy.DockerfilePath, test.ServiceConfig.Dockerfile},
+		}
+
+		for name, assertionTest := range assertions {
+			if assertionTest.field != assertionTest.value {
+				t.Errorf("%s Expected: %#v, got: %#v", name, assertionTest.value, assertionTest.field)
+			}
+		}
+		if !reflect.DeepEqual(bc.Spec.CommonSpec.Strategy.DockerStrategy.Env, buildArgs) {
+			t.Errorf("Expected: %#v, got: %#v", bc.Spec.CommonSpec.Strategy.DockerStrategy.Env, buildArgs)
 		}
 	}
 }
@@ -375,7 +406,8 @@ func TestRecreateStrategyWithVolumesPresent(t *testing.T) {
 	service := kobject.ServiceConfig{
 		ContainerName: "name",
 		Image:         "image",
-		Volumes:       []string{"/tmp/volume"},
+		VolList:       []string{"/tmp/volume"},
+		Volumes:       []kobject.Volumes{{SvcName: "app", MountPath: "/tmp/volume", PVCName: "app-claim0"}},
 	}
 	komposeObject := kobject.KomposeObject{
 		ServiceConfigs: map[string]kobject.ServiceConfig{"app": service},

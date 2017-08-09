@@ -1,5 +1,5 @@
 /*
-Copyright 2016 The Kubernetes Authors All rights reserved.
+Copyright 2017 The Kubernetes Authors All rights reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -19,14 +19,13 @@ package kubernetes
 import (
 	"fmt"
 	"reflect"
-	"sort"
 	"strconv"
 	"time"
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/fatih/structs"
-	"github.com/kubernetes-incubator/kompose/pkg/kobject"
-	"github.com/kubernetes-incubator/kompose/pkg/transformer"
+	"github.com/kubernetes/kompose/pkg/kobject"
+	"github.com/kubernetes/kompose/pkg/transformer"
 	buildapi "github.com/openshift/origin/pkg/build/api"
 	deployapi "github.com/openshift/origin/pkg/deploy/api"
 
@@ -49,6 +48,8 @@ import (
 	"github.com/pkg/errors"
 	"k8s.io/kubernetes/pkg/api/meta"
 	"k8s.io/kubernetes/pkg/labels"
+	"sort"
+	"strings"
 )
 
 // Kubernetes implements Transformer interface and represents Kubernetes transformer
@@ -61,20 +62,11 @@ type Kubernetes struct {
 // used when undeploying resources from kubernetes
 const TIMEOUT = 300
 
-//default size of Persistent Volume Claim
+// PVCRequestSize (Persistent Volume Claim) has default size
 const PVCRequestSize = "100Mi"
 
-// list of all unsupported keys for this transformer
-// Keys are names of variables in kobject struct.
-// this is map to make searching for keys easier
-// to make sure that unsupported key is not going to be reported twice
-// by keeping record if already saw this key in another service
-var unsupportedKey = map[string]bool{
-	"Build": false,
-}
-
 // CheckUnsupportedKey checks if given komposeObject contains
-// keys that are not supported by this tranfomer.
+// keys that are not supported by this transformer.
 // list of all unsupported keys are stored in unsupportedKey variable
 // returns list of TODO: ....
 func (k *Kubernetes) CheckUnsupportedKey(komposeObject *kobject.KomposeObject, unsupportedKey map[string]bool) []string {
@@ -131,7 +123,8 @@ func (k *Kubernetes) InitRC(name string, service kobject.ServiceConfig, replicas
 			APIVersion: "v1",
 		},
 		ObjectMeta: api.ObjectMeta{
-			Name: name,
+			Name:   name,
+			Labels: transformer.ConfigLabels(name),
 		},
 		Spec: api.ReplicationControllerSpec{
 			Replicas: int32(replicas),
@@ -146,7 +139,7 @@ func (k *Kubernetes) InitRC(name string, service kobject.ServiceConfig, replicas
 	return rc
 }
 
-// InitSvc initializes Kubernets Service object
+// InitSvc initializes Kubernetes Service object
 func (k *Kubernetes) InitSvc(name string, service kobject.ServiceConfig) *api.Service {
 	svc := &api.Service{
 		TypeMeta: unversioned.TypeMeta{
@@ -172,7 +165,8 @@ func (k *Kubernetes) InitD(name string, service kobject.ServiceConfig, replicas 
 			APIVersion: "extensions/v1beta1",
 		},
 		ObjectMeta: api.ObjectMeta{
-			Name: name,
+			Name:   name,
+			Labels: transformer.ConfigLabels(name),
 		},
 		Spec: extensions.DeploymentSpec{
 			Replicas: int32(replicas),
@@ -192,7 +186,8 @@ func (k *Kubernetes) InitDS(name string, service kobject.ServiceConfig) *extensi
 			APIVersion: "extensions/v1beta1",
 		},
 		ObjectMeta: api.ObjectMeta{
-			Name: name,
+			Name:   name,
+			Labels: transformer.ConfigLabels(name),
 		},
 		Spec: extensions.DaemonSetSpec{
 			Template: api.PodTemplateSpec{
@@ -331,6 +326,22 @@ func (k *Kubernetes) ConfigServicePorts(name string, service kobject.ServiceConf
 	return servicePorts
 }
 
+//ConfigCapabilities configure POSIX capabilities that can be added or removed to a container
+func (k *Kubernetes) ConfigCapabilities(service kobject.ServiceConfig) *api.Capabilities {
+	capsAdd := []api.Capability{}
+	capsDrop := []api.Capability{}
+	for _, capAdd := range service.CapAdd {
+		capsAdd = append(capsAdd, api.Capability(capAdd))
+	}
+	for _, capDrop := range service.CapDrop {
+		capsDrop = append(capsDrop, api.Capability(capDrop))
+	}
+	return &api.Capabilities{
+		Add:  capsAdd,
+		Drop: capsDrop,
+	}
+}
+
 // ConfigTmpfs configure the tmpfs.
 func (k *Kubernetes) ConfigTmpfs(name string, service kobject.ServiceConfig) ([]api.VolumeMount, []api.Volume) {
 	//initializing volumemounts and volumes
@@ -366,56 +377,53 @@ func (k *Kubernetes) ConfigVolumes(name string, service kobject.ServiceConfig) (
 	volumeMounts := []api.VolumeMount{}
 	volumes := []api.Volume{}
 	var PVCs []*api.PersistentVolumeClaim
+	var volumeName string
 
-	// Set a var based on if the user wants to use emtpy volumes
+	// Set a var based on if the user wants to use empty volumes
 	// as opposed to persistent volumes and volume claims
 	useEmptyVolumes := k.Opt.EmptyVols
 
 	var count int
+	//interating over array of `Vols` struct as it contains all necessary information about volumes
 	for _, volume := range service.Volumes {
 
-		volumeName, host, container, mode, err := transformer.ParseVolume(volume)
-		if err != nil {
-			log.Warningf("Failed to configure container volume: %v", err)
-			continue
-		}
-
-		log.Debug("Volume name %s", volumeName)
-
 		// check if ro/rw mode is defined, default rw
-		readonly := len(mode) > 0 && mode == "ro"
+		readonly := len(volume.Mode) > 0 && volume.Mode == "ro"
 
-		if volumeName == "" {
+		if volume.VolumeName == "" {
 			if useEmptyVolumes {
-				volumeName = fmt.Sprintf("%s-empty%d", name, count)
+				volumeName = strings.Replace(volume.PVCName, "claim", "empty", 1)
 			} else {
-				volumeName = fmt.Sprintf("%s-claim%d", name, count)
+				volumeName = volume.PVCName
 			}
 			count++
+		} else {
+			volumeName = volume.VolumeName
 		}
-
-		// create a new volume mount object and append to list
 		volmount := api.VolumeMount{
 			Name:      volumeName,
 			ReadOnly:  readonly,
-			MountPath: container,
+			MountPath: volume.Container,
 		}
 		volumeMounts = append(volumeMounts, volmount)
-
 		// Get a volume source based on the type of volume we are using
 		// For PVC we will also create a PVC object and add to list
 		var volsource *api.VolumeSource
+
 		if useEmptyVolumes {
 			volsource = k.ConfigEmptyVolumeSource("volume")
 		} else {
+
 			volsource = k.ConfigPVCVolumeSource(volumeName, readonly)
+			if volume.VFrom == "" {
+				createdPVC, err := k.CreatePVC(volumeName, volume.Mode)
 
-			createdPVC, err := k.CreatePVC(volumeName, mode)
-			if err != nil {
-				return nil, nil, nil, errors.Wrap(err, "k.CreatePVC failed")
+				if err != nil {
+					return nil, nil, nil, errors.Wrap(err, "k.CreatePVC failed")
+				}
+
+				PVCs = append(PVCs, createdPVC)
 			}
-
-			PVCs = append(PVCs, createdPVC)
 		}
 
 		// create a new volume object using the volsource and add to list
@@ -425,10 +433,12 @@ func (k *Kubernetes) ConfigVolumes(name string, service kobject.ServiceConfig) (
 		}
 		volumes = append(volumes, vol)
 
-		if len(host) > 0 {
-			log.Warningf("Volume mount on the host %q isn't supported - ignoring path on the host", host)
+		if len(volume.Host) > 0 {
+			log.Warningf("Volume mount on the host %q isn't supported - ignoring path on the host", volume.Host)
 		}
+
 	}
+
 	return volumeMounts, volumes, PVCs, nil
 }
 
@@ -462,29 +472,38 @@ func (k *Kubernetes) ConfigPVCVolumeSource(name string, readonly bool) *api.Volu
 
 // ConfigEnvs configures the environment variables.
 func (k *Kubernetes) ConfigEnvs(name string, service kobject.ServiceConfig) []api.EnvVar {
-	envs := []api.EnvVar{}
+	envs := transformer.EnvSort{}
 	for _, v := range service.Environment {
 		envs = append(envs, api.EnvVar{
 			Name:  v.Name,
 			Value: v.Value,
 		})
 	}
-
+	// Stable sorts data while keeping the original order of equal elements
+	// we need this because envs are not populated in any random order
+	// this sorting ensures they are populated in a particular order
+	sort.Stable(envs)
 	return envs
 }
 
 // CreateKubernetesObjects generates a Kubernetes artifact for each input type service
 func (k *Kubernetes) CreateKubernetesObjects(name string, service kobject.ServiceConfig, opt kobject.ConvertOptions) []runtime.Object {
 	var objects []runtime.Object
+	var replica int
+	if opt.IsReplicaSetFlag || service.Replicas == 0 {
+		replica = opt.Replicas
+	} else {
+		replica = service.Replicas
+	}
 
 	if opt.CreateD {
-		objects = append(objects, k.InitD(name, service, opt.Replicas))
+		objects = append(objects, k.InitD(name, service, replica))
 	}
 	if opt.CreateDS {
 		objects = append(objects, k.InitDS(name, service))
 	}
 	if opt.CreateRC {
-		objects = append(objects, k.InitRC(name, service, opt.Replicas))
+		objects = append(objects, k.InitRC(name, service, replica))
 	}
 
 	return objects
@@ -498,7 +517,8 @@ func (k *Kubernetes) InitPod(name string, service kobject.ServiceConfig) *api.Po
 			APIVersion: "v1",
 		},
 		ObjectMeta: api.ObjectMeta{
-			Name: name,
+			Name:   name,
+			Labels: transformer.ConfigLabels(name),
 		},
 		Spec: k.InitPodSpec(name, service.Image),
 	}
@@ -509,24 +529,51 @@ func (k *Kubernetes) InitPod(name string, service kobject.ServiceConfig) *api.Po
 // returns object that are already sorted in the way that Services are first
 func (k *Kubernetes) Transform(komposeObject kobject.KomposeObject, opt kobject.ConvertOptions) ([]runtime.Object, error) {
 
-	noSupKeys := k.CheckUnsupportedKey(&komposeObject, unsupportedKey)
-	for _, keyName := range noSupKeys {
-		log.Warningf("Kubernetes provider doesn't support %s key - ignoring", keyName)
-	}
-
 	// this will hold all the converted data
 	var allobjects []runtime.Object
 
-	// Need to ensure the kubernetes objects are in a consistent order
-	var sortedKeys []string
-	for name := range komposeObject.ServiceConfigs {
-		sortedKeys = append(sortedKeys, name)
-	}
-	sort.Strings(sortedKeys)
-
+	sortedKeys := SortedKeys(komposeObject)
 	for _, name := range sortedKeys {
 		service := komposeObject.ServiceConfigs[name]
 		var objects []runtime.Object
+
+		// Must build the images before conversion (got to add service.Image in case 'image' key isn't provided
+		// Check that --build is set to true
+		// Check to see if there is an InputFile (required!) before we build the container
+		// Check that there's actually a Build key
+		// Lastly, we must have an Image name to continue
+		if opt.Build == "local" && opt.InputFiles != nil && service.Build != "" {
+
+			if service.Image == "" {
+				return nil, fmt.Errorf("image key required within build parameters in order to build and push service '%s'", name)
+			}
+
+			log.Infof("Build key detected. Attempting to build and push image '%s'", service.Image)
+
+			// Get the directory where the compose file is
+			composeFileDir, err := transformer.GetComposeFileDir(opt.InputFiles)
+			if err != nil {
+				return nil, err
+			}
+
+			// Build the container!
+			err = transformer.BuildDockerImage(service, name, composeFileDir)
+			if err != nil {
+				return nil, errors.Wrapf(err, "Unable to build Docker image for service %v", name)
+			}
+
+			// Push the built container to the repo!
+			err = transformer.PushDockerImage(service, name)
+			if err != nil {
+				return nil, errors.Wrapf(err, "Unable to push Docker image for service %v", name)
+			}
+
+		}
+
+		// If there's no "image" key, use the name of the container that's built
+		if service.Image == "" {
+			service.Image = name
+		}
 
 		// Generate pod only and nothing more
 		if service.Restart == "no" || service.Restart == "on-failure" {
@@ -556,8 +603,7 @@ func (k *Kubernetes) Transform(komposeObject kobject.KomposeObject, opt kobject.
 
 		allobjects = append(allobjects, objects...)
 	}
-	// If docker-compose has a volumes_from directive it will be handled here
-	k.VolumesFrom(&allobjects, komposeObject)
+
 	// sort all object so Services are first
 	k.SortServicesFirst(&allobjects)
 	return allobjects, nil

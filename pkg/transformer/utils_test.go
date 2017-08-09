@@ -18,8 +18,18 @@ package transformer
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 )
+
+func TestFormatProviderName(t *testing.T) {
+	if formatProviderName("openshift") != "OpenShift" {
+		t.Errorf("Got %s, expected OpenShift", formatProviderName("openshift"))
+	}
+	if formatProviderName("kubernetes") != "Kubernetes" {
+		t.Errorf("Got %s, expected Kubernetes", formatProviderName("kubernetes"))
+	}
+}
 
 // When passing "z" or "Z" we expect "" back.
 func TestZParseVolumeLabeling(t *testing.T) {
@@ -127,5 +137,15 @@ func TestParseVolume(t *testing.T) {
 		if mode != test.mode {
 			t.Errorf("In test case %q, returned access mode %s, expected %s", test.test, mode, test.mode)
 		}
+	}
+}
+
+func TestGetComposeFileDir(t *testing.T) {
+	output, err := GetComposeFileDir([]string{"foobar/docker-compose.yaml"})
+	if err != nil {
+		t.Errorf("Error with GetComposeFileDir %v", err)
+	}
+	if !strings.Contains(output, "foobar") {
+		t.Errorf("Expected $PWD/foobar, got %v", output)
 	}
 }

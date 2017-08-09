@@ -1,5 +1,5 @@
 /*
-Copyright 2016 The Kubernetes Authors All rights reserved.
+Copyright 2017 The Kubernetes Authors All rights reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -39,6 +39,7 @@ type ConvertOptions struct {
 	CreateDeploymentConfig      bool
 	BuildRepo                   string
 	BuildBranch                 string
+	Build                       string
 	CreateChart                 bool
 	GenerateYaml                bool
 	GenerateJSON                bool
@@ -52,6 +53,7 @@ type ConvertOptions struct {
 	IsDeploymentFlag            bool
 	IsDaemonSetFlag             bool
 	IsReplicationControllerFlag bool
+	IsReplicaSetFlag            bool
 	IsDeploymentConfigFlag      bool
 	IsNamespaceFlag             bool
 }
@@ -60,34 +62,44 @@ type ConvertOptions struct {
 type ServiceConfig struct {
 	// use tags to mark from what element this value comes
 	ContainerName string
-	Image         string              `compose:"image" bundle:"Image"`
-	Environment   []EnvVar            `compose:"environment" bundle:"Env"`
-	Port          []Ports             `compose:"ports" bundle:"Ports"`
-	Command       []string            `compose:"command" bundle:"Command"`
-	WorkingDir    string              `compose:"" bundle:"WorkingDir"`
-	Args          []string            `compose:"args" bundle:"Args"`
-	Volumes       []string            `compose:"volumes" bundle:"Volumes"`
-	Network       []string            `compose:"network" bundle:"Networks"`
-	Labels        map[string]string   `compose:"labels" bundle:"Labels"`
-	Annotations   map[string]string   `compose:"" bundle:""`
-	CPUSet        string              `compose:"cpuset" bundle:""`
-	CPUShares     int64               `compose:"cpu_shares" bundle:""`
-	CPUQuota      int64               `compose:"cpu_quota" bundle:""`
-	CapAdd        []string            `compose:"cap_add" bundle:""`
-	CapDrop       []string            `compose:"cap_drop" bundle:""`
-	Expose        []string            `compose:"expose" bundle:""`
-	Privileged    bool                `compose:"privileged" bundle:""`
-	Restart       string              `compose:"restart" bundle:""`
-	User          string              `compose:"user" bundle:"User"`
-	VolumesFrom   []string            `compose:"volumes_from" bundle:""`
-	ServiceType   string              `compose:"kompose.service.type" bundle:""`
-	Build         string              `compose:"build" bundle:""`
-	ExposeService string              `compose:"kompose.service.expose" bundle:""`
-	Stdin         bool                `compose:"stdin_open" bundle:""`
-	Tty           bool                `compose:"tty" bundle:""`
-	MemLimit      yaml.MemStringorInt `compose:"mem_limit" bundle:""`
-	TmpFs         []string            `compose:"tmpfs" bundle:""`
-	Dockerfile    string              `compose:"dockerfile" bundle:""`
+	Image         string   `compose:"image" bundle:"Image"`
+	Environment   []EnvVar `compose:"environment" bundle:"Env"`
+	Port          []Ports  `compose:"ports" bundle:"Ports"`
+	Command       []string `compose:"command" bundle:"Command"`
+	WorkingDir    string   `compose:"" bundle:"WorkingDir"`
+	Args          []string `compose:"args" bundle:"Args"`
+	// VolList is list of volumes extracted from docker-compose file
+	VolList         []string            `compose:"volumes" bundle:"Volumes"`
+	Network         []string            `compose:"network" bundle:"Networks"`
+	Labels          map[string]string   `compose:"labels" bundle:"Labels"`
+	Annotations     map[string]string   `compose:"" bundle:""`
+	CPUSet          string              `compose:"cpuset" bundle:""`
+	CPUShares       int64               `compose:"cpu_shares" bundle:""`
+	CPUQuota        int64               `compose:"cpu_quota" bundle:""`
+	CPULimit        int64               `compose:"" bundle:""`
+	CPUReservation  int64               `compose:"" bundle:""`
+	CapAdd          []string            `compose:"cap_add" bundle:""`
+	CapDrop         []string            `compose:"cap_drop" bundle:""`
+	Expose          []string            `compose:"expose" bundle:""`
+	Pid             string              `compose:"pid" bundle:""`
+	Privileged      bool                `compose:"privileged" bundle:""`
+	Restart         string              `compose:"restart" bundle:""`
+	User            string              `compose:"user" bundle:"User"`
+	VolumesFrom     []string            `compose:"volumes_from" bundle:""`
+	ServiceType     string              `compose:"kompose.service.type" bundle:""`
+	StopGracePeriod string              `compose:"stop_grace_period" bundle:""`
+	Build           string              `compose:"build" bundle:""`
+	BuildArgs       map[string]*string  `compose:"build-args" bundle:""`
+	ExposeService   string              `compose:"kompose.service.expose" bundle:""`
+	Stdin           bool                `compose:"stdin_open" bundle:""`
+	Tty             bool                `compose:"tty" bundle:""`
+	MemLimit        yaml.MemStringorInt `compose:"mem_limit" bundle:""`
+	MemReservation  yaml.MemStringorInt `compose:"" bundle:""`
+	TmpFs           []string            `compose:"tmpfs" bundle:""`
+	Dockerfile      string              `compose:"dockerfile" bundle:""`
+	Replicas        int                 `compose:"replicas" bundle:""`
+	// Volumes is a struct which contains all information about each volume
+	Volumes []Volumes `compose:"" bundle:""`
 }
 
 // EnvVar holds the environment variable struct of a container
@@ -102,4 +114,16 @@ type Ports struct {
 	ContainerPort int32
 	HostIP        string
 	Protocol      api.Protocol
+}
+
+// Volumes holds the volume struct of container
+type Volumes struct {
+	SvcName    string // Service name to which volume is linked
+	MountPath  string // Mountpath extracted from docker-compose file
+	VFrom      string // denotes service name from which volume is coming
+	VolumeName string // name of volume if provided explicitly
+	Host       string // host machine address
+	Container  string // Mountpath
+	Mode       string // access mode for volume
+	PVCName    string // name of PVC
 }

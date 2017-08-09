@@ -3,5 +3,4 @@ version: "2"
 services:
     foo:
         build: "./build"
-        command: "sleep 3600"
-
+        image: docker.io/foo/bar

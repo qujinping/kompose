@@ -124,14 +124,6 @@
                 ],
                 "env": [
                   {
-                    "name": "DB_PORT",
-                    "value": "openshift"
-                  },
-                  {
-                    "name": "DB_USER",
-                    "value": "openshift"
-                  },
-                  {
                     "name": "DB_DBID",
                     "value": "openshift"
                   },
@@ -141,6 +133,14 @@
                   },
                   {
                     "name": "DB_PASS",
+                    "value": "openshift"
+                  },
+                  {
+                    "name": "DB_PORT",
+                    "value": "openshift"
+                  },
+                  {
+                    "name": "DB_USER",
                     "value": "openshift"
                   }
                 ],
@@ -255,6 +255,10 @@
                 ],
                 "env": [
                   {
+                    "name": "MYSQL_DATABASE",
+                    "value": "openshift"
+                  },
+                  {
                     "name": "MYSQL_PASSWORD",
                     "value": "openshift"
                   },
@@ -264,10 +268,6 @@
                   },
                   {
                     "name": "MYSQL_USER",
-                    "value": "openshift"
-                  },
-                  {
-                    "name": "MYSQL_DATABASE",
                     "value": "openshift"
                   }
                 ],

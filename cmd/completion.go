@@ -12,18 +12,15 @@ import (
 
 var completion = &cobra.Command{
 	Use:   "completion SHELL",
-	Short: "Generate a bash auto completion file",
-	Long: `Generate a bash auto completion script.
+	Short: "Output shell completion code",
+	Long: `Generates shell completion code.
 
-	Auto completion supports both bash and zsh.
+Auto completion supports both bash and zsh. Output is to STDOUT.
 
-	The output is to stdout.
+source <(kompose completion bash)
+source <(kompose completion zsh)
 
-	Examples:
-	$ source <(kompose completion bash)
-	$ source <(kompose completion zsh)
-
-	Will load the bash completion code.
+Will load the shell completion code.
 	`,
 
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -48,8 +45,6 @@ func Generate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("Too many arguments. Expected only the shell type. ex. kompose completion [bash|zsh]")
 	}
 	shell := args[0]
-	if shell != "bash" && shell != "zsh" {
-	}
 
 	// Generate bash through cobra if selected
 	if shell == "bash" {
